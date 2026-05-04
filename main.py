@@ -1,5 +1,6 @@
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
+from random import randrange
 
 URL = "https://www.imdb.com/search/title/?moviemeter=,10"
 
@@ -48,7 +49,7 @@ def scrape_top10_movies():
     print("=" * 50)
     print("        TOP 10 MOVIES ON IMDB")
     print("=" * 50)
-
+    all_movies = []
     for rank, item in enumerate(movie_items, start=1):
         # Title — inside <h3 class="ipc-title__text">  e.g. "10. Resident Evil"
         title_tag = item.select_one("h3.ipc-title__text")
@@ -73,14 +74,28 @@ def scrape_top10_movies():
         # (may be empty for unreleased titles)
         rating_tag = item.select_one("span.ipc-rating-star--rating")
         rating = rating_tag.get_text(strip=True) if rating_tag else "N/A"
+        current_movie = (f"\n#{rank:>2}. {title}", f"      Release : {release}",
+                          f"      IMDb ⭐  : {rating}", f"      Plot    : {plot}",
+                            f"      Link    : {link}")
+        all_movies.append(current_movie)
+        #print(f"\n#{rank:>2}. {title}")
+        #print(f"      Release : {release}")
+        #print(f"      IMDb ⭐  : {rating}")
+        #print(f"      Plot    : {plot}")
+        #print(f"      Link    : {link}")
+    n_movies = len(all_movies)
 
-        print(f"\n#{rank:>2}. {title}")
-        print(f"      Release : {release}")
-        print(f"      IMDb ⭐  : {rating}")
-        print(f"      Plot    : {plot}")
-        print(f"      Link    : {link}")
-
-    print("\n" + "=" * 50)
+    while(True):
+        idx = randrange(0, n_movies)
+        print(all_movies[idx][0])
+        print(all_movies[idx][1])
+        print(all_movies[idx][2])
+        print(all_movies[idx][3])
+        print(all_movies[idx][4])
+        print("\n" + "=" * 50)
+        user_input = input("Do you want another movie (y/n)? ")
+        if user_input !='y':
+            break
 
 
 if __name__ == "__main__":
