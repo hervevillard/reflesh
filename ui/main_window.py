@@ -252,7 +252,7 @@ class MainWindow(_FramelessBase):
         )
         params_inner.addWidget(self._thin_sep())
         self._tonal_slider, self._tonal_val = self._slider_row(
-            "Tonal levels", 2, 12, 4, params_inner
+            "Tonal levels", 2, 16, 10, params_inner
         )
         params_inner.addWidget(self._thin_sep())
         self._edge_slider, self._edge_val = self._slider_row(

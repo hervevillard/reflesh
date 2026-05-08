@@ -42,9 +42,10 @@ class ImagePanel(QFrame):
         self._zoom: float = 1.0
 
         self._scroll.viewport().installEventFilter(self)
+        self._display.installEventFilter(self)
 
     def eventFilter(self, obj, event):
-        if obj is self._scroll.viewport() and event.type() == QEvent.Type.Wheel:
+        if event.type() == QEvent.Type.Wheel:
             if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
                 delta = event.angleDelta().y()
                 self._zoom_by(self._ZOOM_STEP if delta > 0 else 1.0 / self._ZOOM_STEP)

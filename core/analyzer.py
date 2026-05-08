@@ -12,8 +12,15 @@ class Analyzer:
         """
         lab = rgb2lab(image_rgb.astype(np.float32) / 255.0)
         L = lab[:, :, 0]  # 0–100
-        step = 100.0 / n_levels
-        level_idx = np.floor(L / step).clip(0, n_levels - 1).astype(int)
+        # Bin across the image's actual tonal range so all N levels are always
+        # visible — fixed [0,100] bins leave empty bands for images without pure
+        # black/white, silently producing fewer levels than requested.
+        L_min, L_max = float(L.min()), float(L.max())
+        # Cap to the image's actual tonal range: a flat image can't support more
+        # distinct steps than its L span (in integer units).
+        n_levels = min(n_levels, max(2, int(L_max - L_min)))
+        bins = np.linspace(L_min, L_max, n_levels + 1)
+        level_idx = np.digitize(L, bins[1:-1])  # [0, n_levels-1]
         gray_values = (level_idx / (n_levels - 1) * 255).astype(np.uint8)
         return np.stack([gray_values] * 3, axis=-1)
 
