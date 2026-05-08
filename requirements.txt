@@ -1,0 +1,11 @@
+PyQt6>=6.6.0
+torch>=2.1.0
+torchvision>=0.16.0
+opencv-python>=4.9.0
+scikit-learn>=1.4.0
+scikit-image>=0.22.0
+Pillow>=10.0.0
+numpy>=1.26.0
+huggingface_hub>=0.20.0
+# SAM2 must be installed separately (see launch.bat or README):
+# pip install git+https://github.com/facebookresearch/sam2.git
