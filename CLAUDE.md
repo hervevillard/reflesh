@@ -78,15 +78,17 @@ patch_sam3.py           Applies Windows sam3 compatibility patches after install
 patch_sam3.bat          Convenience launcher for patch_sam3.py (re-run after sam3 reinstall)
 patches/
   sam3_edt_windows.py   Patched sam3/model/edt.py: triton guarded with cv2.distanceTransform fallback
+data/
+  pigments.json         24 artist paint colors (RGB + name) for gamut matching
 ui/
   theme.py              Full QSS dark-warm stylesheet (Tailwind stone + orange palette)
-  image_panel.py        ImagePanel widget — scaled image display with label tag
-  main_window.py        MainWindow — sidebar layout, AnalysisWorker (QThread), PaletteBar
+  image_panel.py        ImagePanel widget — scaled display + zoom (Ctrl+wheel, 25%–800%) + composition overlays (thirds/spiral)
+  main_window.py        MainWindow — frameless (qframelesswindow) + sidebar + AnalysisWorker (QThread) + PaletteBar + QSplitter canvas
 core/
   segmenter.py          SAM 3.1 via native sam3 package (build_sam3_image_model + Sam3Processor)
-  colorizer.py          Global k-means (MiniBatchKMeans) → per-segment dominant color
-  analyzer.py           LAB L-channel tonal map + inking-style edge map
-  exporter.py           PNG composite + SVG polygonization (GDAL-inspired)
+  colorizer.py          k-means quantization, per-segment color fill, complementary_layer, merge_similar_masks
+  analyzer.py           Tonal map, 7 edge styles (inking/sketch/combined/watercolor/hatching/xdog/flow), temperature_map
+  exporter.py           PNG composite, SVG polygonization, value study PNG, brushstroke SVG, nearest_pigments
 ```
 
 ## Processing pipeline
@@ -97,9 +99,9 @@ core/
    - `build_sam3_image_model()` + `Sam3Processor.set_text_prompt(prompt)` → list of mask dicts, cached
 3. **Render** (main thread, debounced 120 ms on slider change):
    - `Colorizer.quantize()` → global k-means palette + per-pixel labels
-   - `Colorizer.colorize_masks()` → flat solid color per segment
+   - `Colorizer.colorize_masks()` → flat solid color per segment (actual mean pixel color of each zone)
    - `Analyzer.tonal_map()` → posterized LAB L-channel
-   - `Analyzer.edge_map()` → bilateral-filtered Canny + simplified SAM 3.1 contours (inking style)
+   - `Analyzer.edge_map(mode=)` → seven selectable styles: **inking** (bilateral-filtered Canny + simplified SAM 3.1 contours), **sketch** (cv2.pencilSketch), **combined** (multiply-blended inking × sketch), **watercolor** (inking edges bloomed with Gaussian bleed), **hatching** (cross-hatch tonal lines at 0°/45°/90°/135°), **xdog** (eXtended Difference of Gaussians — pencil/woodcut/pastel, zero extra deps), **flow** (structure tensor coherency-weighted edges — painterly, follows image form)
    - `Exporter.composite()` → layer blend → displayed in result panel
 4. **Export** → PNG (current composite) or SVG (filled vector paths per segment)
 
@@ -108,16 +110,28 @@ core/
 - **SAM 3.1 runs once per image+prompt** — masks are cached; all slider adjustments re-render from cached masks without re-running SAM 3.1. Only "Min area" or prompt changes require re-analyzing.
 - **SAM 3.1 output normalization** — `segmenter._normalize()` converts the `set_text_prompt` output (masks as torch tensors) into the uniform `{"segmentation": np.bool_, "area": int, "predicted_iou": float}` dict format used throughout the codebase.
 - **Text prompt drives segmentation** — SAM 3.1 is concept-based. The user types a prompt (default: "object") in the sidebar; SAM 3.1 finds all instances of that concept in the image.
-- **Global k-means, per-segment fill** — k-means runs on the whole image to build a coherent palette; each segment then takes its dominant palette color. This ensures color harmony across zones.
+- **Per-segment mean color fill** — each segment is filled with the actual mean RGB of its own pixels (not the global k-means centroid). The k-means palette is still computed for the palette bar display (color harmony reference), but segment fill uses the locally-accurate mean to avoid centroid drift across zones.
 - **SVG export is GDAL polygonization** — each mask becomes a filled `<path>` element. The artist can open the SVG in Illustrator/Inkscape as editable vector shapes.
 - **LAB L-channel for tones** — identical to analyzing a single spectral band in GIS. L ∈ [0,100] is divided into N equal steps, producing a posterized tonal map independent of hue.
-- **Multiply blend for edges** — edge layer (black lines on white) is multiplied over the color layer so colored zones show through everywhere except at edges.
+- **Multiply blend for edges** — edge layer (black lines on white) is multiplied over the color layer so colored zones show through everywhere except at edges. All seven edge modes output the same black-on-white format, so the blend works identically for each.
+- **XDoG edges** — `Analyzer._xdog_map()` implements the eXtended Difference of Gaussians (Winnemöller et al., Adobe Research / SIGGRAPH NPAR 2011). Subtracts two Gaussians at σ and k·σ (k=1.6) to isolate edge frequencies, then applies a soft tanh threshold: above epsilon → white (no edge), below → `1 + tanh(φ·(D−ε))`. `φ` (sharpness) and `ε` (threshold) both scale with `strength`. Zero additional dependencies — pure numpy math. Produces pencil-shading, woodcut, and pastel looks depending on strength.
+- **Flow edges** — `Analyzer._flow_map()` builds the gradient structure tensor J at each pixel (smoothed with integration scale σ_r), computes disc = √((J₁₁−J₂₂)²+4J₁₂²), and derives coherency = disc/(J₁₁+J₂₂). Coherency ∈ [0,1] measures how directionally organized the local gradient is: 1 = pure oriented edge, 0 = isotropic texture. Edge score = ‖∇I‖ · coherency²; percentile-thresholded (top 6–12% based on strength). Result: structural edges following the form of objects, with noise/texture suppressed. Zero additional dependencies — OpenCV Sobel + GaussianBlur only.
+- **Frameless window** — `MainWindow` inherits from `qframelesswindow.FramelessMainWindow` (PyPI package `PyQt6-Frameless-Window`) when the library is installed. This handles DWM native resize/snap on Windows without any `nativeEvent` override. If the library is absent a graceful fallback to `QMainWindow` (native title bar + custom header) is used. Keyboard shortcuts are `QShortcut` objects connected via `.activated.connect(slot)` — not the positional 3-arg constructor form, which is unreliable across PyQt6 versions.
+- **Segment merging** — `Colorizer.merge_similar_masks()` post-processes SAM masks by computing LAB distance between adjacent segment mean colors and union-merging those within the threshold. Runs from cached SAM output; no SAM re-run needed.
+- **Complementary display** — `Colorizer.complementary_layer()` rotates HSV hue by 180° on the color layer; useful for planning shadow colors that mix opposite the light.
+- **Temperature map** — `Analyzer.temperature_map()` classifies each segment as warm/cool/neutral by mean HSV hue; blended over the composite at 45% opacity.
+- **Gamut mapping** — `Exporter.nearest_pigments()` matches each k-means palette color to the nearest entry in `data/pigments.json` using CIE Lab distance. Displayed as italic text below the palette swatch.
+- **Composition overlays** — `ImagePanel.set_overlays()` paints rule-of-thirds grid (white semi-transparent lines) and golden spiral (4-arc approximation, orange) directly onto the scaled result pixmap.
+- **Image zoom** — `ImagePanel` wraps its display label in a `QScrollArea`. `_zoom` (1.0 = fit) is applied as a multiplier on the fit-to-viewport size. Ctrl+wheel zooms in/out around the viewport center; `Ctrl++`/`Ctrl+-`/`Ctrl+0` zoom both panels simultaneously. Zoom is reset when a new image is loaded. Range: 25%–800%, step ×1.25.
+- **Value study export** — `Exporter.save_value_study_png()` saves the posterized LAB L-channel as a grayscale PNG.
+- **Brushstroke SVG export** — `Exporter.save_brushstroke_svg()` adds per-segment seeded random jitter (±4 px) to all contour points before writing SVG paths.
 
 ## Theme / styling
 
 All styling is in `ui/theme.py` as a single QSS string `DARK_WARM`. Color tokens:
-- `#0c0a09` — deepest background (sidebar, header)
-- `#1c1917` — base background
+- `#0d0c0b` — deepest background (sidebar, header, status bar)
+- `#161514` — base background
+- `#1e1c1a` — sidebar card surfaces
 - `#f97316` — accent orange (slider handles, value labels, checked checkboxes)
 - `#9a3412` — primary button (Analyze)
 - `#14532d` — success button (Export PNG)

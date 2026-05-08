@@ -8,13 +8,20 @@ A desktop painting-reference tool that applies GIS spatial analysis thinking to 
 
 ## What it does
 
-| Layer | Description | Painter use |
+| Feature | Description | Painter use |
 |---|---|---|
-| **Color zones** | SAM 3.1 segments filled with dominant flat color | What hue to mix |
+| **Color zones** | SAM 3.1 segments filled with each zone's actual mean color | What hue to mix |
 | **Tonal map** | LAB L-channel posterized into N levels | Where to shade |
-| **Edges** | Bilateral-filtered Canny + SAM contours, simplified for inking style | Where to draw lines |
+| **Edges** | Seven selectable styles: **Inking** · **Sketch** · **Combined** · **Watercolor** · **Hatching** · **XDoG** · **Flow** | Where to draw lines |
+| **Complementary** | Flips all segment hues to their complements | Shadow color planning |
+| **Temperature map** | Warm/cool/neutral fill per segment (blended overlay) | Light source direction |
+| **Merge similar** | Fuses adjacent segments within a LAB distance threshold | Simplify noisy results |
+| **Composition overlays** | Rule of thirds grid + golden spiral arc (painted on result) | Compositional reference |
+| **Gamut matching** | Maps each palette color to the nearest of 24 artist pigments | Know which paint to buy |
+| **Value study export** | Saves the tonal map as a grayscale PNG | Pure light/shadow reference |
+| **Brushstroke SVG** | SVG with per-path random jitter (±4 px, seeded per segment) | Hand-painted vector guide |
 
-All three layers are independently toggleable. Export as a flat **PNG** or as a **SVG** with filled vector paths you can edit in Illustrator or Inkscape.
+All color/tonal/edge layers are independently toggleable. Export as a flat **PNG**, a **grayscale value study PNG**, or a **vector SVG** (clean or brushstroke).
 
 The color level slider is unlimited — not capped at 8 like Photoshop's Cutout filter.
 
@@ -138,15 +145,22 @@ To avoid re-downloading SAM 3.1 weights on every container start, `docker-compos
 2. Type a **Concept prompt** in the sidebar (e.g. `sky`, `figure`, `foliage`, `object`)
 3. Optionally adjust **Min area** to filter out noise, then click **Analyze**
 4. SAM 3.1 segments the image (GPU: ~10–30 s · CPU: several minutes)
-5. Adjust sliders live — no re-analyzing needed:
+5. Adjust controls live — no re-analyzing needed:
    - **Color levels** — number of palette colors (2–64)
    - **Tonal levels** — number of light/shadow steps (2–12)
    - **Edge strength** — how prominent the edge lines are (0–5)
-6. Toggle **Color zones / Tonal map / Edges** layers on or off
-7. Read the extracted palette swatches at the bottom of the sidebar
-8. Click **Export PNG** or **Export SVG**
+   - **Edge style** — Inking / Sketch / Combined / Watercolor / Hatching
+   - **Merge similar** — fuse adjacent segments within this LAB distance (0 = off)
+6. Toggle layers: **Color zones / Tonal map / Edges / Complementary / Temperature map**
+7. Enable **Composition** overlays: Rule of thirds / Golden spiral
+8. Read the palette swatches and nearest artist pigment names below them
+9. Export:
+   - **Export PNG** — current composite
+   - **Export Value Study PNG** — grayscale tonal map
+   - **Export SVG** — filled vector paths per segment
+   - **Export Brushstroke SVG** — same with hand-painted path jitter
 
-> Changing the **Concept prompt** or **Min area** requires clicking Analyze again. All other sliders re-render instantly from cached masks.
+> Changing the **Concept prompt** or **Min area** requires clicking Analyze again. All other controls re-render instantly from cached masks.
 
 ---
 
@@ -157,15 +171,17 @@ main.py               App entry point
 patch_sam3.py         Applies Windows sam3 compatibility patches after install
 patches/
   sam3_edt_windows.py  Patched edt.py: triton guarded with cv2 fallback
+data/
+  pigments.json       24 artist paint colors (RGB + name) for gamut matching
 ui/
-  theme.py            QSS dark-warm stylesheet
-  image_panel.py      Scaled image canvas widget
-  main_window.py      Main window, sidebar, QThread worker, palette swatches
+  theme.py            QSS dark-warm stylesheet (Tailwind stone + orange palette)
+  image_panel.py      Scaled image canvas + composition overlays (thirds/spiral)
+  main_window.py      Frameless main window, sidebar, QThread worker, palette bar
 core/
   segmenter.py        SAM 3.1 via native sam3 package
-  colorizer.py        Global k-means → dominant color per segment
-  analyzer.py         LAB tonal map + semantic edge map
-  exporter.py         PNG composite + SVG polygonization
+  colorizer.py        k-means quantization, per-segment fill, complementary layer, mask merging
+  analyzer.py         LAB tonal map, 5 edge styles, temperature map
+  exporter.py         PNG/value-study/SVG/brushstroke export, pigment matching
 ```
 
 ### GDAL concepts borrowed

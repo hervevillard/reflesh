@@ -27,8 +27,6 @@ class Segmenter:
             try:
                 from sam3.model_builder import build_sam3_image_model, download_ckpt_from_hf
                 from sam3.model.sam3_image_processor import Sam3Processor
-                if self._device == "cuda":
-                    torch.autocast("cuda", dtype=torch.bfloat16).__enter__()
                 ckpt = download_ckpt_from_hf(version="sam3.1")
                 model = build_sam3_image_model(
                     checkpoint_path=ckpt,
@@ -61,11 +59,18 @@ class Segmenter:
     def segment(self, image_rgb: np.ndarray, prompt: str) -> list[dict]:
         if self._processor is None:
             raise RuntimeError("Call load() first.")
+        import torch
         from PIL import Image as PILImage
         pil_img = PILImage.fromarray(image_rgb)
-        inference_state = self._processor.set_image(pil_img)
-        self._processor.reset_all_prompts(inference_state)
-        results = self._processor.set_text_prompt(state=inference_state, prompt=prompt)
+        ctx = (
+            torch.autocast("cuda", dtype=torch.bfloat16)
+            if self._device == "cuda"
+            else torch.autocast("cpu", dtype=torch.bfloat16, enabled=False)
+        )
+        with ctx:
+            inference_state = self._processor.set_image(pil_img)
+            self._processor.reset_all_prompts(inference_state)
+            results = self._processor.set_text_prompt(state=inference_state, prompt=prompt)
         return self._normalize(results)
 
     def _normalize(self, results: dict) -> list[dict]:

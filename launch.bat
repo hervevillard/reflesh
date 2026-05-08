@@ -69,6 +69,8 @@ if not exist "venv\Scripts\activate.bat" (
     echo.
 ) else (
     call venv\Scripts\activate.bat
+    echo  [UPDATE] Checking for new dependencies...
+    pip install -r requirements.txt -q
 )
 
 echo  Launching ArtSegment...

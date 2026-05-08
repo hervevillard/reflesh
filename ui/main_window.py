@@ -1,16 +1,24 @@
 from __future__ import annotations
 
+import json
 import numpy as np
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QFrame,
+    QMainWindow, QWidget, QFrame, QSplitter,
     QHBoxLayout, QVBoxLayout, QScrollArea,
-    QPushButton, QSlider, QLabel, QCheckBox, QLineEdit,
+    QPushButton, QSlider, QLabel, QCheckBox, QLineEdit, QComboBox,
     QFileDialog, QSizePolicy, QStatusBar,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal as Signal, QTimer
-from PyQt6.QtGui import QAction, QColor, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QPainter, QKeySequence, QShortcut
+
+try:
+    from qframelesswindow import FramelessMainWindow as _FramelessBase
+    _FRAMELESS = True
+except ImportError:
+    _FramelessBase = QMainWindow
+    _FRAMELESS = False
 
 from .image_panel import ImagePanel
 from core.segmenter import Segmenter
@@ -54,7 +62,7 @@ class AnalysisWorker(QThread):
 class PaletteBar(QLabel):
     def __init__(self):
         super().__init__()
-        self.setFixedHeight(24)
+        self.setFixedHeight(22)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self._colors: list[tuple] = []
 
@@ -66,28 +74,35 @@ class PaletteBar(QLabel):
         super().paintEvent(event)
         if not self._colors:
             return
-        w = self.width()
-        h = self.height()
-        n = len(self._colors)
+        w, h, n = self.width(), self.height(), len(self._colors)
         swatch_w = max(1, w // n)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         for i, (r, g, b) in enumerate(self._colors):
-            x = i * swatch_w
-            painter.fillRect(x, 0, swatch_w, h, QColor(r, g, b))
+            painter.fillRect(i * swatch_w, 0, swatch_w, h, QColor(r, g, b))
         painter.end()
 
 
 # ── Main window ────────────────────────────────────────────────────────────────
 
-class MainWindow(QMainWindow):
+class MainWindow(_FramelessBase):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ArtSegment")
         self.setMinimumSize(1100, 680)
-        self.resize(1280, 760)
+        self.resize(1300, 780)
+
+        if _FRAMELESS:
+            # Style the library-provided title bar to match our dark theme
+            self.titleBar.setFixedHeight(38)
+            self.titleBar.setStyleSheet("""
+                QWidget { background: #0d0c0b; }
+                QLabel  { color: #f0eeec; font-size: 13px; font-weight: 600;
+                           font-family: 'Inter', 'SF Pro Text', 'Segoe UI', Arial, sans-serif; }
+            """)
 
         self._image_rgb: np.ndarray | None = None
+        self._raw_masks: list | None = None
         self._masks: list | None = None
         self._color_layer: np.ndarray | None = None
         self._tonal_layer: np.ndarray | None = None
@@ -100,19 +115,34 @@ class MainWindow(QMainWindow):
         self._exporter = Exporter()
         self._worker: AnalysisWorker | None = None
 
-        # Debounce slider re-renders
+        self._pigments_data: list[dict] = self._load_pigments()
+
         self._render_timer = QTimer()
         self._render_timer.setSingleShot(True)
         self._render_timer.timeout.connect(self._render)
 
-        # Animate analyze button while running
         self._anim_timer = QTimer()
         self._anim_timer.setInterval(500)
         self._anim_dots = 0
         self._anim_timer.timeout.connect(self._animate_btn)
 
         self._build_ui()
-        self._build_menu()
+        if not _FRAMELESS:
+            self._build_menu()
+        self._register_shortcuts()
+
+        if _FRAMELESS:
+            self.titleBar.raise_()
+
+    # ── Pigments ───────────────────────────────────────────────────────────────
+
+    def _load_pigments(self) -> list[dict]:
+        try:
+            p = Path(__file__).parent.parent / "data" / "pigments.json"
+            with open(p, encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return []
 
     # ── UI construction ────────────────────────────────────────────────────────
 
@@ -123,20 +153,18 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Header
-        header = self._build_header()
-        outer.addWidget(header)
+        # Show app header only when not using the frameless library title bar
+        if not _FRAMELESS:
+            outer.addWidget(self._build_header())
 
-        # Body: sidebar + canvases
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
         outer.addLayout(body, 1)
 
         body.addWidget(self._build_sidebar())
-        body.addLayout(self._build_canvas_area(), 1)
+        body.addWidget(self._build_canvas_area(), 1)
 
-        # Status bar
         self._status_bar = QStatusBar()
         self._status_bar.showMessage("Ready — load an image to begin.")
         self.setStatusBar(self._status_bar)
@@ -163,6 +191,28 @@ class MainWindow(QMainWindow):
 
         return frame
 
+    def _build_menu(self):
+        menu = self.menuBar()
+        menu.setStyleSheet(
+            "QMenuBar { background: #0d0c0b; color: #6a6865;"
+            " border-bottom: 1px solid #242220; }"
+            "QMenuBar::item:selected { background: #242220; color: #e8e6e3; }"
+            "QMenu { background: #1e1c1a; border: 1px solid #2a2826; }"
+            "QMenu::item:selected { background: #242220; color: #e8e6e3; }"
+        )
+        from PyQt6.QtGui import QAction
+        file_menu = menu.addMenu("File")
+        for label, shortcut, slot in [
+            ("Open Image…",        "Ctrl+O",       self._load_image),
+            ("Export PNG…",        "Ctrl+S",       self._export_png),
+            ("Export SVG…",        "Ctrl+Shift+S", self._export_svg),
+            ("Export Palette PNG…","Ctrl+Shift+P", self._export_palette_png),
+        ]:
+            act = QAction(label, self)
+            act.setShortcut(shortcut)
+            act.triggered.connect(slot)
+            file_menu.addAction(act)
+
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
@@ -173,15 +223,15 @@ class MainWindow(QMainWindow):
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(6)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(8)
 
-        # ── Action buttons
-        self._load_btn = QPushButton("  Open Image…")
+        # ── Open + Analyze ─────────────────────────────────────────────────
+        self._load_btn = QPushButton("Open Image…")
         self._load_btn.setToolTip("Ctrl+O")
         self._load_btn.clicked.connect(self._load_image)
 
-        self._analyze_btn = QPushButton("  Analyze ▶")
+        self._analyze_btn = QPushButton("Analyze ▶")
         self._analyze_btn.setObjectName("primaryBtn")
         self._analyze_btn.setEnabled(False)
         self._analyze_btn.setToolTip("Run SAM 3.1 segmentation")
@@ -189,74 +239,148 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self._load_btn)
         layout.addWidget(self._analyze_btn)
-        layout.addWidget(self._separator())
 
-        # ── Parameters
+        # ── Parameters card ────────────────────────────────────────────────
         layout.addWidget(self._section("PARAMETERS"))
-        self._color_slider, self._color_val = self._slider_row(
-            "Color levels", 2, 64, 16, layout
-        )
-        self._tonal_slider, self._tonal_val = self._slider_row(
-            "Tonal levels", 2, 12, 4, layout
-        )
-        self._edge_slider, self._edge_val = self._slider_row(
-            "Edge strength", 0, 5, 2, layout
-        )
-        layout.addWidget(self._separator())
+        params_card = self._card()
+        params_inner = QVBoxLayout(params_card)
+        params_inner.setContentsMargins(12, 10, 12, 10)
+        params_inner.setSpacing(8)
 
-        layout.addWidget(self._section("SEGMENTATION"))
-        prompt_lbl = QLabel("Concept prompt")
-        prompt_lbl.setStyleSheet("color: #a8a29e; font-size: 12px;")
-        layout.addWidget(prompt_lbl)
-        self._prompt_edit = QLineEdit("object")
-        self._prompt_edit.setPlaceholderText("e.g. sky, water, figure…")
-        self._prompt_edit.setStyleSheet(
-            "QLineEdit { background: #292524; color: #fafaf9; border: 1px solid #44403c;"
-            " border-radius: 4px; padding: 4px 6px; font-size: 12px; }"
-            "QLineEdit:focus { border-color: #f97316; }"
+        self._color_slider, self._color_val = self._slider_row(
+            "Color levels", 2, 64, 16, params_inner
         )
-        layout.addWidget(self._prompt_edit)
+        params_inner.addWidget(self._thin_sep())
+        self._tonal_slider, self._tonal_val = self._slider_row(
+            "Tonal levels", 2, 12, 4, params_inner
+        )
+        params_inner.addWidget(self._thin_sep())
+        self._edge_slider, self._edge_val = self._slider_row(
+            "Edge strength", 0, 5, 2, params_inner
+        )
+        params_inner.addWidget(self._thin_sep())
+
+        edge_row = QHBoxLayout()
+        edge_row.setContentsMargins(0, 0, 0, 0)
+        edge_lbl = QLabel("Edge style")
+        edge_lbl.setStyleSheet("color: #6a6865; font-size: 12px; background: transparent;")
+        self._edge_mode = QComboBox()
+        self._edge_mode.addItems(["Inking", "Sketch", "Combined", "Watercolor", "Hatching", "XDoG", "Flow"])
+        self._edge_mode.currentIndexChanged.connect(self._schedule_render)
+        edge_row.addWidget(edge_lbl)
+        edge_row.addStretch()
+        edge_row.addWidget(self._edge_mode)
+        params_inner.addLayout(edge_row)
+        layout.addWidget(params_card)
+
+        # ── Segmentation card ──────────────────────────────────────────────
+        layout.addWidget(self._section("SEGMENTATION"))
+        seg_card = self._card()
+        seg_inner = QVBoxLayout(seg_card)
+        seg_inner.setContentsMargins(12, 10, 12, 10)
+        seg_inner.setSpacing(8)
+
+        prompt_lbl = QLabel("Concept prompt")
+        prompt_lbl.setStyleSheet("color: #6a6865; font-size: 12px; background: transparent;")
+        seg_inner.addWidget(prompt_lbl)
+        self._prompt_edit = QLineEdit("object")
+        self._prompt_edit.setPlaceholderText("sky · water · figure…")
+        seg_inner.addWidget(self._prompt_edit)
+        seg_inner.addWidget(self._thin_sep())
         self._min_area_slider, self._min_area_val = self._slider_row(
-            "Min area (px)", 100, 5000, 500, layout, connect_render=False
+            "Min area (px)", 100, 5000, 500, seg_inner, connect_render=False
+        )
+        seg_inner.addWidget(self._thin_sep())
+        self._merge_slider, self._merge_val = self._slider_row(
+            "Merge similar", 0, 50, 0, seg_inner, connect_render=True
         )
         hint = QLabel("Prompt + min area require re-analyzing")
         hint.setObjectName("dimLabel")
-        hint.setStyleSheet("color: #44403c; font-size: 10px; margin-left: 2px;")
-        layout.addWidget(hint)
-        layout.addWidget(self._separator())
+        seg_inner.addWidget(hint)
+        layout.addWidget(seg_card)
 
-        # ── Layer toggles
+        # ── Layers card ────────────────────────────────────────────────────
         layout.addWidget(self._section("LAYERS"))
+        layers_card = self._card()
+        layers_inner = QVBoxLayout(layers_card)
+        layers_inner.setContentsMargins(12, 10, 12, 10)
+        layers_inner.setSpacing(4)
+
         self._chk_color = QCheckBox("Color zones")
         self._chk_color.setChecked(True)
         self._chk_tonal = QCheckBox("Tonal map")
         self._chk_tonal.setChecked(False)
         self._chk_edges = QCheckBox("Edges")
         self._chk_edges.setChecked(True)
-        for chk in (self._chk_color, self._chk_tonal, self._chk_edges):
-            chk.stateChanged.connect(self._schedule_render)
-            layout.addWidget(chk)
-        layout.addWidget(self._separator())
+        self._chk_comp = QCheckBox("Complementary")
+        self._chk_comp.setChecked(False)
+        self._chk_comp.setToolTip("Flip hues to complementaries — plan shadow colors")
+        self._chk_temp = QCheckBox("Temperature map")
+        self._chk_temp.setChecked(False)
+        self._chk_temp.setToolTip("Overlay warm / cool / neutral per segment")
 
-        # ── Palette
-        layout.addWidget(self._section("EXTRACTED PALETTE"))
+        for chk in (self._chk_color, self._chk_tonal, self._chk_edges,
+                    self._chk_comp, self._chk_temp):
+            chk.stateChanged.connect(self._schedule_render)
+            layers_inner.addWidget(chk)
+        layout.addWidget(layers_card)
+
+        # ── Composition card ───────────────────────────────────────────────
+        layout.addWidget(self._section("COMPOSITION"))
+        comp_card = self._card()
+        comp_inner = QVBoxLayout(comp_card)
+        comp_inner.setContentsMargins(12, 10, 12, 10)
+        comp_inner.setSpacing(4)
+
+        self._chk_thirds = QCheckBox("Rule of thirds")
+        self._chk_spiral = QCheckBox("Golden spiral")
+        for chk in (self._chk_thirds, self._chk_spiral):
+            chk.stateChanged.connect(self._update_overlays)
+            comp_inner.addWidget(chk)
+        layout.addWidget(comp_card)
+
+        # ── Palette card ───────────────────────────────────────────────────
+        layout.addWidget(self._section("PALETTE"))
+        palette_card = self._card()
+        palette_inner = QVBoxLayout(palette_card)
+        palette_inner.setContentsMargins(12, 10, 12, 10)
+        palette_inner.setSpacing(8)
+
         self._palette_bar = PaletteBar()
         self._palette_bar.setStyleSheet("border-radius: 4px;")
-        layout.addWidget(self._palette_bar)
-        self._export_palette_btn = QPushButton("  Export Palette PNG")
+        palette_inner.addWidget(self._palette_bar)
+
+        self._pigment_lbl = QLabel()
+        self._pigment_lbl.setObjectName("pigmentNames")
+        self._pigment_lbl.setWordWrap(True)
+        self._pigment_lbl.hide()
+        palette_inner.addWidget(self._pigment_lbl)
+
+        self._export_palette_btn = QPushButton("Export Palette PNG")
         self._export_palette_btn.setEnabled(False)
         self._export_palette_btn.clicked.connect(self._export_palette_png)
-        layout.addWidget(self._export_palette_btn)
-        layout.addWidget(self._separator())
+        palette_inner.addWidget(self._export_palette_btn)
+        layout.addWidget(palette_card)
 
-        # ── Export buttons
+        # ── Export card ────────────────────────────────────────────────────
         layout.addWidget(self._section("EXPORT"))
-        self._export_png_btn = QPushButton("  Export PNG")
+        export_card = self._card()
+        export_inner = QVBoxLayout(export_card)
+        export_inner.setContentsMargins(12, 10, 12, 10)
+        export_inner.setSpacing(8)
+
+        self._export_png_btn = QPushButton("Export PNG")
         self._export_png_btn.setObjectName("successBtn")
         self._export_png_btn.setEnabled(False)
         self._export_png_btn.clicked.connect(self._export_png)
 
-        self._export_svg_btn = QPushButton("  Export SVG  (vector)")
+        self._export_value_btn = QPushButton("Export Value Study PNG")
+        self._export_value_btn.setObjectName("successBtn")
+        self._export_value_btn.setEnabled(False)
+        self._export_value_btn.setToolTip("Save grayscale tonal map for value planning")
+        self._export_value_btn.clicked.connect(self._export_value_study)
+
+        self._export_svg_btn = QPushButton("Export SVG  (vector)")
         self._export_svg_btn.setEnabled(False)
         self._export_svg_btn.setToolTip(
             "GDAL-style polygonization: segments as filled vector paths.\n"
@@ -264,8 +388,19 @@ class MainWindow(QMainWindow):
         )
         self._export_svg_btn.clicked.connect(self._export_svg)
 
-        layout.addWidget(self._export_png_btn)
-        layout.addWidget(self._export_svg_btn)
+        self._export_brushstroke_btn = QPushButton("Export Brushstroke SVG")
+        self._export_brushstroke_btn.setEnabled(False)
+        self._export_brushstroke_btn.setToolTip(
+            "SVG with randomized path jitter — hand-painted feel."
+        )
+        self._export_brushstroke_btn.clicked.connect(self._export_brushstroke_svg)
+
+        export_inner.addWidget(self._export_png_btn)
+        export_inner.addWidget(self._export_value_btn)
+        export_inner.addWidget(self._export_svg_btn)
+        export_inner.addWidget(self._export_brushstroke_btn)
+        layout.addWidget(export_card)
+
         layout.addStretch()
 
         scroll.setWidget(content)
@@ -277,17 +412,36 @@ class MainWindow(QMainWindow):
 
         return sidebar
 
-    def _build_canvas_area(self) -> QHBoxLayout:
-        layout = QHBoxLayout()
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+    def _build_canvas_area(self) -> QSplitter:
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(6)
+        splitter.setStyleSheet("""
+            QSplitter::handle { background: #242220; border-radius: 3px; }
+            QSplitter::handle:hover { background: #f97316; }
+        """)
 
         self._orig_panel = ImagePanel("Original")
         self._result_panel = ImagePanel("Result")
 
-        layout.addWidget(self._orig_panel)
-        layout.addWidget(self._result_panel)
-        return layout
+        splitter.addWidget(self._orig_panel)
+        splitter.addWidget(self._result_panel)
+        splitter.setContentsMargins(14, 14, 14, 14)
+        splitter.setSizes([1, 1])
+        return splitter
+
+    def _register_shortcuts(self):
+        for key, slot in [
+            ("Ctrl+O",       self._load_image),
+            ("Ctrl+S",       self._export_png),
+            ("Ctrl+Shift+S", self._export_svg),
+            ("Ctrl+Shift+P", self._export_palette_png),
+            ("Ctrl++",       self._zoom_in),
+            ("Ctrl+=",       self._zoom_in),
+            ("Ctrl+-",       self._zoom_out),
+            ("Ctrl+0",       self._zoom_reset),
+        ]:
+            sc = QShortcut(QKeySequence(key), self)
+            sc.activated.connect(slot)
 
     # ── Helper builders ────────────────────────────────────────────────────────
 
@@ -296,7 +450,12 @@ class MainWindow(QMainWindow):
         lbl.setObjectName("section")
         return lbl
 
-    def _separator(self) -> QFrame:
+    def _card(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("card")
+        return frame
+
+    def _thin_sep(self) -> QFrame:
         line = QFrame()
         line.setFrameShape(QFrame.Shape.HLine)
         return line
@@ -306,12 +465,13 @@ class MainWindow(QMainWindow):
         parent_layout: QVBoxLayout, connect_render: bool = True
     ) -> tuple[QSlider, QLabel]:
         row_widget = QWidget()
+        row_widget.setStyleSheet("background: transparent;")
         row = QHBoxLayout(row_widget)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
 
         lbl = QLabel(label)
-        lbl.setStyleSheet("color: #a8a29e; font-size: 12px;")
+        lbl.setStyleSheet("color: #6a6865; font-size: 12px; background: transparent;")
 
         val_lbl = QLabel(str(default))
         val_lbl.setObjectName("value")
@@ -332,31 +492,30 @@ class MainWindow(QMainWindow):
 
         return slider, val_lbl
 
-    def _build_menu(self):
-        menu = self.menuBar()
-        menu.setStyleSheet(
-            "QMenuBar { background: #0c0a09; color: #a8a29e; border-bottom: 1px solid #292524; }"
-            "QMenuBar::item:selected { background: #292524; color: #fafaf9; }"
-            "QMenu { background: #1c1917; border: 1px solid #292524; }"
-            "QMenu::item:selected { background: #292524; }"
-        )
-        file_menu = menu.addMenu("File")
-        open_act = QAction("Open Image…", self)
-        open_act.setShortcut("Ctrl+O")
-        open_act.triggered.connect(self._load_image)
-        export_png_act = QAction("Export PNG…", self)
-        export_png_act.setShortcut("Ctrl+S")
-        export_png_act.triggered.connect(self._export_png)
-        export_svg_act = QAction("Export SVG…", self)
-        export_svg_act.setShortcut("Ctrl+Shift+S")
-        export_svg_act.triggered.connect(self._export_svg)
-        export_palette_act = QAction("Export Palette PNG…", self)
-        export_palette_act.setShortcut("Ctrl+Shift+P")
-        export_palette_act.triggered.connect(self._export_palette_png)
-        for act in (open_act, export_png_act, export_svg_act, export_palette_act):
-            file_menu.addAction(act)
+    # ── Device label helper ────────────────────────────────────────────────────
+
+    def _set_device_label(self, text: str) -> None:
+        if _FRAMELESS:
+            self._status_bar.showMessage(text)
+        else:
+            self._device_lbl.setText(text)
 
     # ── Slots ──────────────────────────────────────────────────────────────────
+
+    def _zoom_in(self):
+        self._orig_panel.zoom_in()
+        self._result_panel.zoom_in()
+        self._status_bar.showMessage(f"Zoom: {int(self._result_panel.zoom * 100)}%")
+
+    def _zoom_out(self):
+        self._orig_panel.zoom_out()
+        self._result_panel.zoom_out()
+        self._status_bar.showMessage(f"Zoom: {int(self._result_panel.zoom * 100)}%")
+
+    def _zoom_reset(self):
+        self._orig_panel.reset_zoom()
+        self._result_panel.reset_zoom()
+        self._status_bar.showMessage("Zoom reset to fit")
 
     def _load_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -368,15 +527,21 @@ class MainWindow(QMainWindow):
         from PIL import Image
         img = Image.open(path).convert("RGB")
         self._image_rgb = np.array(img)
-        self._masks = self._color_layer = self._tonal_layer = self._edge_layer = None
+        self._raw_masks = self._masks = None
+        self._color_layer = self._tonal_layer = self._edge_layer = None
         self._current_palette = None
+        self._orig_panel.reset_zoom()
+        self._result_panel.reset_zoom()
         self._orig_panel.set_image(self._image_rgb)
         self._result_panel.clear()
-        self._analyze_btn.setText("  Analyze ▶")
+        self._analyze_btn.setText("Analyze ▶")
         self._analyze_btn.setEnabled(True)
         self._export_png_btn.setEnabled(False)
+        self._export_value_btn.setEnabled(False)
         self._export_svg_btn.setEnabled(False)
+        self._export_brushstroke_btn.setEnabled(False)
         self._export_palette_btn.setEnabled(False)
+        self._pigment_lbl.hide()
         h, w = self._image_rgb.shape[:2]
         optimal_min_area = max(100, min(5000, w * h // 2000))
         self._min_area_slider.setValue(optimal_min_area)
@@ -398,15 +563,16 @@ class MainWindow(QMainWindow):
 
     def _on_analysis_done(self, results: dict):
         self._anim_timer.stop()
-        self._masks = results["masks"]
-        self._analyze_btn.setText("  Re-analyze ▶")
+        self._raw_masks = results["masks"]
+        self._analyze_btn.setText("Re-analyze ▶")
         self._analyze_btn.setEnabled(True)
         if "device" in results:
             device_str = "GPU (CUDA)" if results["device"] == "cuda" else "CPU"
-            self._device_lbl.setText(device_str)
+            self._set_device_label(device_str)
         self._render()
         self._export_png_btn.setEnabled(True)
         self._export_svg_btn.setEnabled(True)
+        self._export_brushstroke_btn.setEnabled(True)
 
     def _on_error(self, msg: str):
         self._anim_timer.stop()
@@ -415,40 +581,75 @@ class MainWindow(QMainWindow):
 
     def _animate_btn(self):
         self._anim_dots = (self._anim_dots + 1) % 4
-        dots = "." * self._anim_dots
-        self._analyze_btn.setText(f"  Analyzing{dots}")
+        self._analyze_btn.setText(f"Analyzing{'.' * self._anim_dots}")
 
     def _schedule_render(self):
-        if self._masks is not None:
+        if self._raw_masks is not None:
             self._render_timer.start(120)
 
+    def _update_overlays(self):
+        self._result_panel.set_overlays(
+            self._chk_thirds.isChecked(),
+            self._chk_spiral.isChecked(),
+        )
+
     def _render(self):
-        if self._image_rgb is None or self._masks is None:
+        if self._image_rgb is None or self._raw_masks is None:
             return
+
+        self._masks = self._colorizer.merge_similar_masks(
+            self._raw_masks, self._image_rgb, self._merge_slider.value()
+        )
 
         palette, labels = self._colorizer.quantize(
             self._image_rgb, self._color_slider.value()
         )
         self._current_palette = palette
+
         self._color_layer = self._colorizer.colorize_masks(
             self._masks, palette, labels, self._image_rgb.shape, self._image_rgb
         )
+
+        color_for_composite = (
+            self._colorizer.complementary_layer(self._color_layer)
+            if self._chk_comp.isChecked()
+            else self._color_layer
+        )
+
         self._tonal_layer = self._analyzer.tonal_map(
             self._image_rgb, self._tonal_slider.value()
         )
         self._edge_layer = self._analyzer.edge_map(
-            self._image_rgb, self._masks, self._edge_slider.value()
+            self._image_rgb, self._masks, self._edge_slider.value(),
+            self._edge_mode.currentText().lower()
         )
 
         composite = self._exporter.composite(
-            self._color_layer, self._tonal_layer, self._edge_layer,
+            color_for_composite, self._tonal_layer, self._edge_layer,
             self._chk_color.isChecked(),
             self._chk_tonal.isChecked(),
             self._chk_edges.isChecked(),
         )
+
+        if self._chk_temp.isChecked():
+            temp_layer = self._analyzer.temperature_map(self._image_rgb, self._masks)
+            composite = self._exporter.blend_temperature(composite, temp_layer, opacity=0.45)
+
         self._result_panel.set_image(composite)
+        self._result_panel.set_overlays(
+            self._chk_thirds.isChecked(),
+            self._chk_spiral.isChecked(),
+        )
+
         self._palette_bar.set_colors(palette)
         self._export_palette_btn.setEnabled(True)
+        self._export_value_btn.setEnabled(True)
+
+        if self._pigments_data:
+            matches = self._exporter.nearest_pigments(palette, self._pigments_data)
+            names = ", ".join(dict.fromkeys(m["name"] for m in matches))
+            self._pigment_lbl.setText(names)
+            self._pigment_lbl.show()
 
         n = len(self._masks)
         k = self._color_slider.value()
@@ -464,12 +665,31 @@ class MainWindow(QMainWindow):
         )
         if not path:
             return
+        color_for_export = (
+            self._colorizer.complementary_layer(self._color_layer)
+            if self._chk_comp.isChecked()
+            else self._color_layer
+        )
         composite = self._exporter.composite(
-            self._color_layer, self._tonal_layer, self._edge_layer,
+            color_for_export, self._tonal_layer, self._edge_layer,
             self._chk_color.isChecked(), self._chk_tonal.isChecked(), self._chk_edges.isChecked(),
         )
+        if self._chk_temp.isChecked() and self._masks:
+            temp_layer = self._analyzer.temperature_map(self._image_rgb, self._masks)
+            composite = self._exporter.blend_temperature(composite, temp_layer)
         self._exporter.save_png(composite, path)
         self._status_bar.showMessage(f"Saved PNG: {path}")
+
+    def _export_value_study(self):
+        if self._tonal_layer is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Value Study", "artsegment_values.png", "PNG (*.png)"
+        )
+        if not path:
+            return
+        self._exporter.save_value_study_png(self._tonal_layer, path)
+        self._status_bar.showMessage(f"Saved value study: {path}")
 
     def _export_svg(self):
         if self._color_layer is None or self._masks is None:
@@ -481,6 +701,17 @@ class MainWindow(QMainWindow):
             return
         self._exporter.save_svg(self._color_layer, self._masks, path)
         self._status_bar.showMessage(f"Saved SVG: {path}")
+
+    def _export_brushstroke_svg(self):
+        if self._color_layer is None or self._masks is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Brushstroke SVG", "artsegment_brushstroke.svg", "SVG (*.svg)"
+        )
+        if not path:
+            return
+        self._exporter.save_brushstroke_svg(self._color_layer, self._masks, path)
+        self._status_bar.showMessage(f"Saved brushstroke SVG: {path}")
 
     def _export_palette_png(self):
         if self._current_palette is None:

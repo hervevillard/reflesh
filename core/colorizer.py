@@ -1,5 +1,7 @@
 import numpy as np
+import cv2
 from sklearn.cluster import MiniBatchKMeans
+from skimage.color import rgb2lab
 
 
 class Colorizer:
@@ -47,3 +49,77 @@ class Colorizer:
             result[~covered] = palette[labels[~covered]]
 
         return result
+
+    def complementary_layer(self, color_layer: np.ndarray) -> np.ndarray:
+        """Rotate every pixel's hue by 180° — returns the complementary color layer."""
+        hsv = cv2.cvtColor(color_layer, cv2.COLOR_RGB2HSV).astype(np.int16)
+        hsv[:, :, 0] = (hsv[:, :, 0] + 90) % 180  # OpenCV H range is 0-179
+        return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
+
+    def merge_similar_masks(
+        self, masks: list[dict], image_rgb: np.ndarray, threshold_lab: int
+    ) -> list[dict]:
+        """
+        Merge adjacent masks whose mean LAB colors are within threshold_lab distance.
+        Returns a reduced mask list sorted largest-first.
+        If threshold_lab == 0, returns a shallow copy unchanged.
+        """
+        if threshold_lab == 0 or len(masks) < 2:
+            return list(masks)
+
+        # Compute mean LAB for every mask
+        lab_img = rgb2lab(image_rgb.astype(np.float32) / 255.0)
+        mean_labs = []
+        for m in masks:
+            seg = m["segmentation"]
+            mean_labs.append(lab_img[seg].mean(axis=0) if seg.any() else np.zeros(3))
+
+        # Find adjacent pairs (share a boundary pixel using dilation overlap)
+        n = len(masks)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        dilated = [
+            cv2.dilate(m["segmentation"].astype(np.uint8), kernel) for m in masks
+        ]
+        adj = set()
+        for i in range(n):
+            for j in range(i + 1, n):
+                if (dilated[i] & masks[j]["segmentation"].astype(np.uint8)).any():
+                    dist = float(np.linalg.norm(mean_labs[i] - mean_labs[j]))
+                    if dist < threshold_lab:
+                        adj.add((dist, i, j))
+
+        # Greedy union-find merge (smallest distance first)
+        parent = list(range(n))
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        for dist, i, j in sorted(adj):
+            ri, rj = find(i), find(j)
+            if ri != rj:
+                parent[ri] = rj
+
+        # Collect groups
+        groups: dict[int, list[int]] = {}
+        for i in range(n):
+            groups.setdefault(find(i), []).append(i)
+
+        merged = []
+        for indices in groups.values():
+            if len(indices) == 1:
+                merged.append(masks[indices[0]])
+            else:
+                combined_seg = np.zeros_like(masks[0]["segmentation"])
+                for idx in indices:
+                    combined_seg |= masks[idx]["segmentation"]
+                merged.append({
+                    "segmentation": combined_seg,
+                    "area": int(combined_seg.sum()),
+                    "predicted_iou": max(masks[i]["predicted_iou"] for i in indices),
+                })
+
+        merged.sort(key=lambda m: m["area"], reverse=True)
+        return merged
