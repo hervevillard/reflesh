@@ -23,6 +23,7 @@ huggingface_hub>=0.24.0
 python-dotenv>=1.0.0
 einops      # required by sam3 model internals (listed as optional in sam3 but imported at runtime)
 psutil      # required by sam3/model/sam3_video_predictor.py at import time
+pycocotools # COCO dataset utilities (mask encoding/decoding)
 # triton: NOT installable on Windows (no Windows wheels exist).
 # patch_sam3.bat / patch_sam3.py apply a cv2.distanceTransform fallback to edt.py after install.
 

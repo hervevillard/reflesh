@@ -243,6 +243,10 @@ class MainWindow(QMainWindow):
         self._palette_bar = PaletteBar()
         self._palette_bar.setStyleSheet("border-radius: 4px;")
         layout.addWidget(self._palette_bar)
+        self._export_palette_btn = QPushButton("  Export Palette PNG")
+        self._export_palette_btn.setEnabled(False)
+        self._export_palette_btn.clicked.connect(self._export_palette_png)
+        layout.addWidget(self._export_palette_btn)
         layout.addWidget(self._separator())
 
         # ── Export buttons
@@ -346,7 +350,10 @@ class MainWindow(QMainWindow):
         export_svg_act = QAction("Export SVG…", self)
         export_svg_act.setShortcut("Ctrl+Shift+S")
         export_svg_act.triggered.connect(self._export_svg)
-        for act in (open_act, export_png_act, export_svg_act):
+        export_palette_act = QAction("Export Palette PNG…", self)
+        export_palette_act.setShortcut("Ctrl+Shift+P")
+        export_palette_act.triggered.connect(self._export_palette_png)
+        for act in (open_act, export_png_act, export_svg_act, export_palette_act):
             file_menu.addAction(act)
 
     # ── Slots ──────────────────────────────────────────────────────────────────
@@ -365,10 +372,14 @@ class MainWindow(QMainWindow):
         self._current_palette = None
         self._orig_panel.set_image(self._image_rgb)
         self._result_panel.clear()
+        self._analyze_btn.setText("  Analyze ▶")
         self._analyze_btn.setEnabled(True)
         self._export_png_btn.setEnabled(False)
         self._export_svg_btn.setEnabled(False)
+        self._export_palette_btn.setEnabled(False)
         h, w = self._image_rgb.shape[:2]
+        optimal_min_area = max(100, min(5000, w * h // 2000))
+        self._min_area_slider.setValue(optimal_min_area)
         self._status_bar.showMessage(f"Loaded: {Path(path).name}  ·  {w} × {h} px")
 
     def _run_analysis(self):
@@ -420,7 +431,7 @@ class MainWindow(QMainWindow):
         )
         self._current_palette = palette
         self._color_layer = self._colorizer.colorize_masks(
-            self._masks, palette, labels, self._image_rgb.shape
+            self._masks, palette, labels, self._image_rgb.shape, self._image_rgb
         )
         self._tonal_layer = self._analyzer.tonal_map(
             self._image_rgb, self._tonal_slider.value()
@@ -437,6 +448,7 @@ class MainWindow(QMainWindow):
         )
         self._result_panel.set_image(composite)
         self._palette_bar.set_colors(palette)
+        self._export_palette_btn.setEnabled(True)
 
         n = len(self._masks)
         k = self._color_slider.value()
@@ -469,3 +481,14 @@ class MainWindow(QMainWindow):
             return
         self._exporter.save_svg(self._color_layer, self._masks, path)
         self._status_bar.showMessage(f"Saved SVG: {path}")
+
+    def _export_palette_png(self):
+        if self._current_palette is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Palette PNG", "artsegment_palette.png", "PNG (*.png)"
+        )
+        if not path:
+            return
+        self._exporter.save_palette_png(self._current_palette, path)
+        self._status_bar.showMessage(f"Saved palette PNG: {path}")

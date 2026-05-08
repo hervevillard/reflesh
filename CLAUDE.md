@@ -85,7 +85,7 @@ ui/
 core/
   segmenter.py          SAM 3.1 via native sam3 package (build_sam3_image_model + Sam3Processor)
   colorizer.py          Global k-means (MiniBatchKMeans) → per-segment dominant color
-  analyzer.py           LAB L-channel tonal map + Canny/semantic edge map
+  analyzer.py           LAB L-channel tonal map + inking-style edge map
   exporter.py           PNG composite + SVG polygonization (GDAL-inspired)
 ```
 
@@ -99,7 +99,7 @@ core/
    - `Colorizer.quantize()` → global k-means palette + per-pixel labels
    - `Colorizer.colorize_masks()` → flat solid color per segment
    - `Analyzer.tonal_map()` → posterized LAB L-channel
-   - `Analyzer.edge_map()` → Canny + SAM 3.1 contours combined
+   - `Analyzer.edge_map()` → bilateral-filtered Canny + simplified SAM 3.1 contours (inking style)
    - `Exporter.composite()` → layer blend → displayed in result panel
 4. **Export** → PNG (current composite) or SVG (filled vector paths per segment)
 

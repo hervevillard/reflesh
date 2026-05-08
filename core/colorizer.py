@@ -22,19 +22,24 @@ class Colorizer:
         palette: np.ndarray,
         labels: np.ndarray,
         image_shape: tuple,
+        image_rgb: np.ndarray | None = None,
     ) -> np.ndarray:
-        """Fill each SAM segment with its dominant palette color (flat solid)."""
+        """Fill each SAM segment with its actual mean pixel color (flat solid)."""
         h, w = image_shape[:2]
         result = np.zeros((h, w, 3), dtype=np.uint8)
         covered = np.zeros((h, w), dtype=bool)
 
         for m in masks:  # already sorted largest-first by segmenter
             seg = m["segmentation"]
-            seg_labels = labels[seg]
-            if seg_labels.size == 0:
+            if not seg.any():
                 continue
-            dominant = int(np.bincount(seg_labels).argmax())
-            result[seg] = palette[dominant]
+            if image_rgb is not None:
+                # Actual mean of the segment's pixels — accurate per zone
+                result[seg] = image_rgb[seg].mean(axis=0).astype(np.uint8)
+            else:
+                seg_labels = labels[seg]
+                dominant = int(np.bincount(seg_labels).argmax())
+                result[seg] = palette[dominant]
             covered[seg] = True
 
         # Gap fill (thin boundaries between segments)

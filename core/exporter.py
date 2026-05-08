@@ -32,6 +32,30 @@ class Exporter:
     def save_png(self, image_rgb: np.ndarray, path: str) -> None:
         Image.fromarray(image_rgb).save(path)
 
+    def save_palette_png(self, palette: np.ndarray, path: str) -> None:
+        from PIL import ImageDraw, ImageFont
+
+        swatch_w, swatch_h, label_h = 64, 60, 20
+        n = len(palette)
+        img = Image.new("RGB", (n * swatch_w, swatch_h + label_h), (28, 25, 23))
+        draw = ImageDraw.Draw(img)
+
+        try:
+            font = ImageFont.load_default(size=11)
+        except TypeError:
+            font = ImageFont.load_default()
+
+        for i, (r, g, b) in enumerate(palette.astype(int)):
+            x = i * swatch_w
+            draw.rectangle([x, 0, x + swatch_w - 1, swatch_h - 1], fill=(r, g, b))
+            hex_str = f"#{r:02x}{g:02x}{b:02x}"
+            bb = draw.textbbox((0, 0), hex_str, font=font)
+            tx = x + (swatch_w - (bb[2] - bb[0])) // 2
+            ty = swatch_h + (label_h - (bb[3] - bb[1])) // 2
+            draw.text((tx, ty), hex_str, fill=(250, 250, 249), font=font)
+
+        img.save(path)
+
     def save_svg(
         self,
         color_layer: np.ndarray,

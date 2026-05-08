@@ -21,28 +21,48 @@ class Analyzer:
         self, image_rgb: np.ndarray, masks: list[dict], strength: int
     ) -> np.ndarray:
         """
-        Combine Canny detail edges with SAM semantic contours.
-        Analogous to GDAL polygonize — segment boundaries become crisp vector-like lines.
+        Inking-style edges: bilateral-filtered Canny (structural, noise-free) +
+        SAM semantic boundaries (simplified with approxPolyDP).
+        Bilateral filter kills texture noise while preserving real edges, giving
+        the clean 'ink stroke' look of East-Asian line art.
+        strength 0 = no edges; 1–5 = increasing thickness and edge sensitivity.
         Returns black-lines-on-white RGB array (H, W, 3).
         """
-        gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+        h, w = image_rgb.shape[:2]
+        if strength == 0:
+            return np.full((h, w, 3), 255, dtype=np.uint8)
 
-        # Fine texture edges via Canny
-        lo, hi = max(10, 20 * strength), max(30, 60 * strength)
-        canny = cv2.Canny(gray, lo, hi) if strength > 0 else np.zeros_like(gray)
+        # Bilateral filter: preserves real edges, suppresses texture/noise
+        filtered = cv2.bilateralFilter(image_rgb, d=9, sigmaColor=75, sigmaSpace=75)
+        gray = cv2.cvtColor(filtered, cv2.COLOR_RGB2GRAY)
 
-        # Semantic segment boundaries (the GDAL polygonize layer)
-        semantic = np.zeros(image_rgb.shape[:2], dtype=np.uint8)
+        # Canny on the clean filtered image — high thresholds keep only strong edges
+        lo = 40 + (5 - strength) * 15   # 55→40 as strength rises → more edges
+        hi = lo * 3
+        structural = cv2.Canny(gray, lo, hi)
+
+        # SAM semantic boundaries — blurred mask → smooth contour → simplified strokes
+        semantic = np.zeros((h, w), dtype=np.uint8)
         for m in masks:
+            mask = m["segmentation"].astype(np.uint8) * 255
+            blurred = cv2.GaussianBlur(mask, (7, 7), 0)
+            _, smooth = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY)
             contours, _ = cv2.findContours(
-                m["segmentation"].astype(np.uint8),
-                cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_SIMPLE,
+                smooth, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
-            cv2.drawContours(semantic, contours, -1, 255, 2)
+            simplified = [
+                cv2.approxPolyDP(c, 0.001 * cv2.arcLength(c, True), True)
+                for c in contours
+                if len(c) >= 3
+            ]
+            cv2.drawContours(semantic, simplified, -1, 255, strength)
 
-        combined = cv2.bitwise_or(canny, semantic)
-        inverted = cv2.bitwise_not(combined)  # black lines on white background
+        combined = cv2.bitwise_or(structural, semantic)
+        # Slight dilation so thin structural lines reach ink-stroke weight
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (strength, strength))
+        combined = cv2.dilate(combined, kernel, iterations=1)
+
+        inverted = cv2.bitwise_not(combined)
         return np.stack([inverted] * 3, axis=-1)
 
     def zonal_stats(self, image_rgb: np.ndarray, masks: list[dict]) -> list[dict]:

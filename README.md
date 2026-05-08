@@ -12,7 +12,7 @@ A desktop painting-reference tool that applies GIS spatial analysis thinking to 
 |---|---|---|
 | **Color zones** | SAM 3.1 segments filled with dominant flat color | What hue to mix |
 | **Tonal map** | LAB L-channel posterized into N levels | Where to shade |
-| **Edges** | Semantic segment boundaries + Canny detail lines | Where to draw lines |
+| **Edges** | Bilateral-filtered Canny + SAM contours, simplified for inking style | Where to draw lines |
 
 All three layers are independently toggleable. Export as a flat **PNG** or as a **SVG** with filled vector paths you can edit in Illustrator or Inkscape.
 
