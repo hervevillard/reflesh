@@ -20,22 +20,50 @@ if not exist "venv\Scripts\activate.bat" (
 
     call venv\Scripts\activate.bat
 
-    echo  [SETUP] Installing dependencies ^(this takes a few minutes on first run^)...
-    pip install --upgrade pip -q
-    pip install -r requirements.txt -q
+    echo  [SETUP] Installing PyTorch with CUDA support...
+    echo  ^(downloading ~2 GB CUDA wheels from download.pytorch.org — this may take a while^)
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128 -q
     if errorlevel 1 (
-        echo  [ERROR] Failed to install dependencies.
+        echo  [ERROR] Failed to install PyTorch with CUDA.
+        echo  Check your internet connection to download.pytorch.org and retry.
         pause
         exit /b 1
     )
 
-    echo  [SETUP] Installing SAM2 from Meta...
-    pip install git+https://github.com/facebookresearch/sam2.git -q
+    echo  [SETUP] Installing remaining dependencies...
+    pip install --upgrade pip -q
+    pip install -r requirements.txt -q
     if errorlevel 1 (
-        echo  [ERROR] Failed to install SAM2. Check internet connection.
+        echo  [ERROR] Failed to install pip dependencies.
         pause
         exit /b 1
     )
+
+    echo  [SETUP] Installing SAM3 package...
+    if exist sam3\pyproject.toml (
+        pip install -e sam3 -q
+    ) else (
+        pip install git+https://github.com/facebookresearch/sam3.git -q
+    )
+    if errorlevel 1 (
+        echo  [ERROR] Failed to install SAM3.
+        pause
+        exit /b 1
+    )
+
+    echo  [SETUP] Applying SAM3 Windows patches...
+    python patch_sam3.py
+    if errorlevel 1 (
+        echo  [WARNING] SAM3 patch step had errors ^(see above^). The app may still work.
+    )
+
+    echo.
+    echo  [AUTH] SAM3 is a gated HuggingFace model.
+    echo  If you haven't already, request access at:
+    echo    https://huggingface.co/facebook/sam3.1
+    echo  Then authenticate:
+    echo    huggingface-cli login
+    echo.
 
     echo  [SETUP] Setup complete!
     echo.
@@ -44,8 +72,13 @@ if not exist "venv\Scripts\activate.bat" (
 )
 
 echo  Launching ArtSegment...
-echo  (SAM2 model will be downloaded automatically on first analyze)
+echo  (SAM3 weights download automatically on first Analyze — ~1 GB, cached after)
 echo.
+
+:: Suppress HuggingFace symlinks warning — Windows needs Developer Mode for symlinks;
+:: the cache still works correctly without them (copies instead of symlinks).
+set HF_HUB_DISABLE_SYMLINKS_WARNING=1
+
 python main.py
 
 if errorlevel 1 (

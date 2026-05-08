@@ -1,11 +1,32 @@
 PyQt6>=6.6.0
-torch>=2.1.0
-torchvision>=0.16.0
-opencv-python>=4.9.0
+
+# PyTorch — SAM3 requires 2.7+. MUST be installed from the PyTorch CUDA index,
+# NOT from PyPI (PyPI only has CPU-only wheels):
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+# launch.bat does this automatically on first run.
+torch>=2.7.0
+torchvision>=0.22.0  # must match torch: 2.7→0.22, 2.8→0.23, 2.9→0.24, 2.10→0.25, 2.11→0.26
+
+# headless avoids Qt library conflict with PyQt6
+# <4.12 keeps numpy<2 compatible; 4.12+ started requiring numpy>=2
+# If you have opencv-python installed, remove it first: pip uninstall opencv-python
+opencv-python-headless>=4.9.0,<4.12
+
 scikit-learn>=1.4.0
 scikit-image>=0.22.0
 Pillow>=10.0.0
-numpy>=1.26.0
-huggingface_hub>=0.20.0
-# SAM2 must be installed separately (see launch.bat or README):
-# pip install git+https://github.com/facebookresearch/sam2.git
+
+# <2 is a hard sam3 constraint (sam3/pyproject.toml: numpy>=1.26,<2)
+numpy>=1.26,<2
+
+huggingface_hub>=0.24.0
+python-dotenv>=1.0.0
+einops      # required by sam3 model internals (listed as optional in sam3 but imported at runtime)
+psutil      # required by sam3/model/sam3_video_predictor.py at import time
+# triton: NOT installable on Windows (no Windows wheels exist).
+# patch_sam3.bat / patch_sam3.py apply a cv2.distanceTransform fallback to edt.py after install.
+
+# SAM3 native package (not on PyPI) — install from GitHub:
+#   pip install git+https://github.com/facebookresearch/sam3.git
+# If you have a local sam3 source tree you can use editable mode instead:
+#   pip install -e ./sam3   (folder must remain on disk)

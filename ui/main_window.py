@@ -6,7 +6,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QFrame,
     QHBoxLayout, QVBoxLayout, QScrollArea,
-    QPushButton, QSlider, QLabel, QCheckBox,
+    QPushButton, QSlider, QLabel, QCheckBox, QLineEdit,
     QFileDialog, QSizePolicy, QStatusBar,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal as Signal, QTimer
@@ -26,23 +26,25 @@ class AnalysisWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)
 
-    def __init__(self, segmenter: Segmenter, image_rgb: np.ndarray, min_area: int):
+    def __init__(self, segmenter: Segmenter, image_rgb: np.ndarray, min_area: int, prompt: str):
         super().__init__()
         self._segmenter = segmenter
         self._image = image_rgb
         self._min_area = min_area
+        self._prompt = prompt
 
     def run(self):
         try:
             if not self._segmenter.is_loaded:
-                self.progress.emit("Downloading SAM2 model (first run only)…")
+                self.progress.emit("Loading SAM 3.1 (first run: ~60 s)…")
             else:
-                self.progress.emit("Preparing SAM2…")
+                self.progress.emit("Preparing SAM 3.1…")
             self._segmenter.load(self._min_area)
-            self.progress.emit("Segmenting image…")
-            masks = self._segmenter.segment(self._image)
+            device = self._segmenter._device or "unknown"
+            self.progress.emit(f'Segmenting "{self._prompt}" on {device.upper()}…')
+            masks = self._segmenter.segment(self._image, self._prompt)
             self.progress.emit(f"Found {len(masks)} segments.")
-            self.finished.emit({"masks": masks})
+            self.finished.emit({"masks": masks, "device": device})
         except Exception as exc:
             self.error.emit(str(exc))
 
@@ -155,12 +157,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(sub)
         layout.addStretch()
 
-        device_lbl = QLabel()
-        device_lbl.setObjectName("dimLabel")
-        import torch
-        device = "GPU (CUDA)" if torch.cuda.is_available() else "CPU"
-        device_lbl.setText(device)
-        layout.addWidget(device_lbl)
+        self._device_lbl = QLabel("GPU / CPU — detected on first run")
+        self._device_lbl.setObjectName("dimLabel")
+        layout.addWidget(self._device_lbl)
 
         return frame
 
@@ -185,7 +184,7 @@ class MainWindow(QMainWindow):
         self._analyze_btn = QPushButton("  Analyze ▶")
         self._analyze_btn.setObjectName("primaryBtn")
         self._analyze_btn.setEnabled(False)
-        self._analyze_btn.setToolTip("Run SAM2 segmentation")
+        self._analyze_btn.setToolTip("Run SAM 3.1 segmentation")
         self._analyze_btn.clicked.connect(self._run_analysis)
 
         layout.addWidget(self._load_btn)
@@ -206,10 +205,21 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._separator())
 
         layout.addWidget(self._section("SEGMENTATION"))
+        prompt_lbl = QLabel("Concept prompt")
+        prompt_lbl.setStyleSheet("color: #a8a29e; font-size: 12px;")
+        layout.addWidget(prompt_lbl)
+        self._prompt_edit = QLineEdit("object")
+        self._prompt_edit.setPlaceholderText("e.g. sky, water, figure…")
+        self._prompt_edit.setStyleSheet(
+            "QLineEdit { background: #292524; color: #fafaf9; border: 1px solid #44403c;"
+            " border-radius: 4px; padding: 4px 6px; font-size: 12px; }"
+            "QLineEdit:focus { border-color: #f97316; }"
+        )
+        layout.addWidget(self._prompt_edit)
         self._min_area_slider, self._min_area_val = self._slider_row(
             "Min area (px)", 100, 5000, 500, layout, connect_render=False
         )
-        hint = QLabel("Requires re-analyzing")
+        hint = QLabel("Prompt + min area require re-analyzing")
         hint.setObjectName("dimLabel")
         hint.setStyleSheet("color: #44403c; font-size: 10px; margin-left: 2px;")
         layout.addWidget(hint)
@@ -364,10 +374,11 @@ class MainWindow(QMainWindow):
     def _run_analysis(self):
         if self._image_rgb is None:
             return
+        prompt = self._prompt_edit.text().strip() or "object"
         self._analyze_btn.setEnabled(False)
         self._anim_timer.start()
         self._worker = AnalysisWorker(
-            self._segmenter, self._image_rgb, self._min_area_slider.value()
+            self._segmenter, self._image_rgb, self._min_area_slider.value(), prompt
         )
         self._worker.progress.connect(self._status_bar.showMessage)
         self._worker.finished.connect(self._on_analysis_done)
@@ -379,6 +390,9 @@ class MainWindow(QMainWindow):
         self._masks = results["masks"]
         self._analyze_btn.setText("  Re-analyze ▶")
         self._analyze_btn.setEnabled(True)
+        if "device" in results:
+            device_str = "GPU (CUDA)" if results["device"] == "cuda" else "CPU"
+            self._device_lbl.setText(device_str)
         self._render()
         self._export_png_btn.setEnabled(True)
         self._export_svg_btn.setEnabled(True)

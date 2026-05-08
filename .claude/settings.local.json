@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(curl -s \"https://raw.githubusercontent.com/facebookresearch/sam3/main/README.md\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/facebookresearch/sam3/main/examples/sam3_image_predictor_example.ipynb\")",
+      "Bash(python3 -c \"import sys,json; nb=json.load\\(sys.stdin\\); [print\\(''.join\\(c['source']\\)\\) for c in nb['cells'] if c['cell_type']=='code']\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/facebookresearch/sam3/main/sam3/visualization_utils.py\")",
+      "Bash(curl -s \"https://raw.githubusercontent.com/facebookresearch/sam3/main/sam3/model_builder.py\")",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Read(//usr/local/lib/python3.12/dist-packages/**)",
+      "Read(//usr/lib/python3/**)"
+    ]
+  }
+}
