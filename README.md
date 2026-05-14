@@ -12,7 +12,7 @@ A desktop painting-reference tool that applies GIS spatial analysis thinking to 
 |---|---|---|
 | **Color zones** | SAM 3.1 segments filled with each zone's actual mean color | What hue to mix |
 | **Tonal map** | LAB L-channel posterized into N levels | Where to shade |
-| **Edges** | Seven selectable styles: **Inking** · **Sketch** · **Combined** · **Watercolor** · **Hatching** · **XDoG** · **Flow** | Where to draw lines |
+| **Edges** | Four styles: **Coloring** · **Outline** · **Drawn** (SAM segment boundaries) · **Cartoon** (classic median-blur + adaptive threshold on image pixels) | Where to draw lines |
 | **Complementary** | Flips all segment hues to their complements | Shadow color planning |
 | **Temperature map** | Warm/cool/neutral fill per segment (blended overlay) | Light source direction |
 | **Merge similar** | Fuses adjacent segments within a LAB distance threshold | Simplify noisy results |
@@ -149,18 +149,33 @@ To avoid re-downloading SAM 3.1 weights on every container start, `docker-compos
    - **Color levels** — number of palette colors (2–64)
    - **Tonal levels** — number of light/shadow steps (2–12)
    - **Edge strength** — how prominent the edge lines are (0–5)
-   - **Edge style** — Inking / Sketch / Combined / Watercolor / Hatching
+   - **Edge style** — Coloring (default) / Outline / Drawn (SAM boundaries, texture-free) / Cartoon (median blur + adaptive threshold, follows image detail)
    - **Merge similar** — fuse adjacent segments within this LAB distance (0 = off)
-6. Toggle layers: **Color zones / Tonal map / Edges / Complementary / Temperature map**
+6. Toggle layers: **Color zones / Cartoonize / Tonal map / Edges / Complementary / Temperature map**
+   > **Cartoon effect**: enable **Cartoonize** + set Edge style to **Cartoon** for the classic flat-color + ink-line cartoon look on any image
 7. Enable **Composition** overlays: Rule of thirds / Golden spiral
-8. Read the palette swatches and nearest artist pigment names below them
+8. Read the palette swatches (sorted dark → light) and nearest artist pigment names below them
 9. Export:
    - **Export PNG** — current composite
    - **Export Value Study PNG** — grayscale tonal map
    - **Export SVG** — filled vector paths per segment
    - **Export Brushstroke SVG** — same with hand-painted path jitter
+   - **Export Palette PNG** — horizontal strip of palette swatches sorted darkest → lightest, with hex labels
 
 > Changing the **Concept prompt** or **Min area** requires clicking Analyze again. All other controls re-render instantly from cached masks.
+
+### Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+O` | Open image |
+| `Ctrl+S` | Export PNG |
+| `Ctrl+Shift+S` | Export SVG |
+| `Ctrl+Shift+P` | Export palette PNG |
+| `F11` | Maximize / restore window |
+| `Ctrl+M` | Minimize window |
+| `Ctrl++` / `Ctrl+-` | Zoom in / out |
+| `Ctrl+0` | Reset zoom to fit |
 
 ---
 

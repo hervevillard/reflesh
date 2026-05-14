@@ -14,7 +14,8 @@
       "Bash(python3 *)",
       "Read(//usr/local/lib/python3.12/dist-packages/**)",
       "Read(//usr/lib/python3/**)",
-      "WebFetch(domain:www.pythonguis.com)"
+      "WebFetch(domain:www.pythonguis.com)",
+      "Bash(find /mnt/c/Python* -path \"*/qframelesswindow/*.py\")"
     ]
   }
 }

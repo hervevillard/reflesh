@@ -27,6 +27,85 @@ from core.analyzer import Analyzer
 from core.exporter import Exporter
 
 
+# ── Custom title bar ───────────────────────────────────────────────────────────
+
+class TitleBar(QFrame):
+    """Draggable title bar with min / max / close window controls."""
+
+    def __init__(self, parent: QMainWindow):
+        super().__init__(parent)
+        self._win = parent
+        self._drag_pos = None
+        self._handle_drag = True  # disabled when qframelesswindow owns drag
+        self.setObjectName("appTitleBar")
+        self.setFixedHeight(38)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(16, 0, 4, 0)
+        layout.setSpacing(0)
+
+        lbl = QLabel("ArtSegment")
+        lbl.setObjectName("appTitle")
+        layout.addWidget(lbl)
+        layout.addSpacing(10)
+
+        sub = QLabel("AI IMAGE SEGMENTATION FOR ARTISTS")
+        sub.setObjectName("appSubtitle")
+        layout.addWidget(sub)
+        layout.addStretch()
+
+        self.device_lbl = QLabel("GPU / CPU — detected on first run")
+        self.device_lbl.setObjectName("dimLabel")
+        layout.addWidget(self.device_lbl)
+        layout.addSpacing(8)
+
+        self._min_btn = QPushButton("—")
+        self._min_btn.setObjectName("winMin")
+        self._max_btn = QPushButton("□")
+        self._max_btn.setObjectName("winMax")
+        self._close_btn = QPushButton("✕")
+        self._close_btn.setObjectName("winClose")
+
+        for btn in (self._min_btn, self._max_btn, self._close_btn):
+            btn.setFixedSize(46, 38)
+            btn.setFlat(True)
+            layout.addWidget(btn)
+
+        self._min_btn.clicked.connect(parent.showMinimized)
+        self._max_btn.clicked.connect(self._toggle_max)
+        self._close_btn.clicked.connect(parent.close)
+
+    def _toggle_max(self):
+        if self._win.isMaximized():
+            self._win.showNormal()
+            self._max_btn.setText("□")
+        else:
+            self._win.showMaximized()
+            self._max_btn.setText("❐")
+
+    def mousePressEvent(self, event):
+        if self._handle_drag and event.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = (
+                event.globalPosition().toPoint() - self._win.frameGeometry().topLeft()
+            )
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (self._handle_drag and self._drag_pos is not None
+                and event.buttons() == Qt.MouseButton.LeftButton):
+            self._win.move(event.globalPosition().toPoint() - self._drag_pos)
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_pos = None
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._toggle_max()
+        super().mouseDoubleClickEvent(event)
+
+
 # ── Background worker ──────────────────────────────────────────────────────────
 
 class AnalysisWorker(QThread):
@@ -92,15 +171,6 @@ class MainWindow(_FramelessBase):
         self.setMinimumSize(1100, 680)
         self.resize(1300, 780)
 
-        if _FRAMELESS:
-            # Style the library-provided title bar to match our dark theme
-            self.titleBar.setFixedHeight(38)
-            self.titleBar.setStyleSheet("""
-                QWidget { background: #0d0c0b; }
-                QLabel  { color: #f0eeec; font-size: 13px; font-weight: 600;
-                           font-family: 'Inter', 'SF Pro Text', 'Segoe UI', Arial, sans-serif; }
-            """)
-
         self._image_rgb: np.ndarray | None = None
         self._raw_masks: list | None = None
         self._masks: list | None = None
@@ -132,7 +202,13 @@ class MainWindow(_FramelessBase):
         self._register_shortcuts()
 
         if _FRAMELESS:
-            self.titleBar.raise_()
+            # Let the library own window drag / resize; our bar supplies the UI.
+            self._title_bar._handle_drag = False
+            self.setTitleBar(self._title_bar)
+            # setTitleBar places the bar at y=0 as a window-level overlay.
+            # Push the central-widget content below it so nothing is hidden.
+            self.setContentsMargins(0, 38, 0, 0)
+            self._title_bar.raise_()
 
     # ── Pigments ───────────────────────────────────────────────────────────────
 
@@ -153,9 +229,11 @@ class MainWindow(_FramelessBase):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Show app header only when not using the frameless library title bar
+        self._title_bar = TitleBar(self)
         if not _FRAMELESS:
-            outer.addWidget(self._build_header())
+            # Frameless library keeps the bar as a window-level overlay; only
+            # add it to the layout when we have a standard OS window frame.
+            outer.addWidget(self._title_bar)
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -168,28 +246,6 @@ class MainWindow(_FramelessBase):
         self._status_bar = QStatusBar()
         self._status_bar.showMessage("Ready — load an image to begin.")
         self.setStatusBar(self._status_bar)
-
-    def _build_header(self) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("header")
-        layout = QHBoxLayout(frame)
-        layout.setContentsMargins(20, 0, 20, 0)
-
-        title = QLabel("ArtSegment")
-        title.setObjectName("appTitle")
-        sub = QLabel("AI IMAGE SEGMENTATION FOR ARTISTS")
-        sub.setObjectName("appSubtitle")
-
-        layout.addWidget(title)
-        layout.addSpacing(12)
-        layout.addWidget(sub)
-        layout.addStretch()
-
-        self._device_lbl = QLabel("GPU / CPU — detected on first run")
-        self._device_lbl.setObjectName("dimLabel")
-        layout.addWidget(self._device_lbl)
-
-        return frame
 
     def _build_menu(self):
         menu = self.menuBar()
@@ -265,7 +321,7 @@ class MainWindow(_FramelessBase):
         edge_lbl = QLabel("Edge style")
         edge_lbl.setStyleSheet("color: #6a6865; font-size: 12px; background: transparent;")
         self._edge_mode = QComboBox()
-        self._edge_mode.addItems(["Inking", "Sketch", "Combined", "Watercolor", "Hatching", "XDoG", "Flow"])
+        self._edge_mode.addItems(["Coloring", "Outline", "Drawn", "Cartoon"])
         self._edge_mode.currentIndexChanged.connect(self._schedule_render)
         edge_row.addWidget(edge_lbl)
         edge_row.addStretch()
@@ -283,8 +339,8 @@ class MainWindow(_FramelessBase):
         prompt_lbl = QLabel("Concept prompt")
         prompt_lbl.setStyleSheet("color: #6a6865; font-size: 12px; background: transparent;")
         seg_inner.addWidget(prompt_lbl)
-        self._prompt_edit = QLineEdit("object")
-        self._prompt_edit.setPlaceholderText("sky · water · figure…")
+        self._prompt_edit = QLineEdit("every object and its edges")
+        self._prompt_edit.setPlaceholderText("sky · figure · foliage · every object…")
         seg_inner.addWidget(self._prompt_edit)
         seg_inner.addWidget(self._thin_sep())
         self._min_area_slider, self._min_area_val = self._slider_row(
@@ -308,6 +364,13 @@ class MainWindow(_FramelessBase):
 
         self._chk_color = QCheckBox("Color zones")
         self._chk_color.setChecked(True)
+        self._chk_cartoon_layer = QCheckBox("Cartoonize")
+        self._chk_cartoon_layer.setChecked(False)
+        self._chk_cartoon_layer.setToolTip(
+            "Full cartoon transform: edge-preserving flat colors + ink lines baked in.\n"
+            "Edge strength slider controls line density.\n"
+            "Tonal map and temperature overlays still apply on top."
+        )
         self._chk_tonal = QCheckBox("Tonal map")
         self._chk_tonal.setChecked(False)
         self._chk_edges = QCheckBox("Edges")
@@ -319,8 +382,8 @@ class MainWindow(_FramelessBase):
         self._chk_temp.setChecked(False)
         self._chk_temp.setToolTip("Overlay warm / cool / neutral per segment")
 
-        for chk in (self._chk_color, self._chk_tonal, self._chk_edges,
-                    self._chk_comp, self._chk_temp):
+        for chk in (self._chk_color, self._chk_cartoon_layer, self._chk_tonal,
+                    self._chk_edges, self._chk_comp, self._chk_temp):
             chk.stateChanged.connect(self._schedule_render)
             layers_inner.addWidget(chk)
         layout.addWidget(layers_card)
@@ -439,6 +502,8 @@ class MainWindow(_FramelessBase):
             ("Ctrl+=",       self._zoom_in),
             ("Ctrl+-",       self._zoom_out),
             ("Ctrl+0",       self._zoom_reset),
+            ("F11",          self._toggle_maximize),
+            ("Ctrl+M",       self.showMinimized),
         ]:
             sc = QShortcut(QKeySequence(key), self)
             sc.activated.connect(slot)
@@ -495,12 +560,15 @@ class MainWindow(_FramelessBase):
     # ── Device label helper ────────────────────────────────────────────────────
 
     def _set_device_label(self, text: str) -> None:
-        if _FRAMELESS:
-            self._status_bar.showMessage(text)
-        else:
-            self._device_lbl.setText(text)
+        self._title_bar.device_lbl.setText(text)
 
     # ── Slots ──────────────────────────────────────────────────────────────────
+
+    def _toggle_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
 
     def _zoom_in(self):
         self._orig_panel.zoom_in()
@@ -550,7 +618,7 @@ class MainWindow(_FramelessBase):
     def _run_analysis(self):
         if self._image_rgb is None:
             return
-        prompt = self._prompt_edit.text().strip() or "object"
+        prompt = self._prompt_edit.text().strip() or "every object and its edges"
         self._analyze_btn.setEnabled(False)
         self._anim_timer.start()
         self._worker = AnalysisWorker(
@@ -610,11 +678,17 @@ class MainWindow(_FramelessBase):
             self._masks, palette, labels, self._image_rgb.shape, self._image_rgb
         )
 
-        color_for_composite = (
-            self._colorizer.complementary_layer(self._color_layer)
-            if self._chk_comp.isChecked()
-            else self._color_layer
-        )
+        cartoon_on = self._chk_cartoon_layer.isChecked()
+
+        if cartoon_on:
+            # cartoon_composite bakes flat base + ink lines together; no separate edge pass
+            color_for_composite = self._analyzer.cartoon_composite(
+                self._image_rgb, self._edge_slider.value()
+            )
+        elif self._chk_comp.isChecked():
+            color_for_composite = self._colorizer.complementary_layer(self._color_layer)
+        else:
+            color_for_composite = self._color_layer
 
         self._tonal_layer = self._analyzer.tonal_map(
             self._image_rgb, self._tonal_slider.value()
@@ -626,9 +700,10 @@ class MainWindow(_FramelessBase):
 
         composite = self._exporter.composite(
             color_for_composite, self._tonal_layer, self._edge_layer,
-            self._chk_color.isChecked(),
-            self._chk_tonal.isChecked(),
-            self._chk_edges.isChecked(),
+            show_color=self._chk_color.isChecked() or cartoon_on,
+            show_tonal=self._chk_tonal.isChecked(),
+            # Don't add a second edge pass when cartoon already has lines baked in
+            show_edges=self._chk_edges.isChecked() and not cartoon_on,
         )
 
         if self._chk_temp.isChecked():
@@ -641,7 +716,12 @@ class MainWindow(_FramelessBase):
             self._chk_spiral.isChecked(),
         )
 
-        self._palette_bar.set_colors(palette)
+        lum = (
+            0.2126 * palette[:, 0].astype(float)
+            + 0.7152 * palette[:, 1].astype(float)
+            + 0.0722 * palette[:, 2].astype(float)
+        )
+        self._palette_bar.set_colors(palette[np.argsort(lum)])
         self._export_palette_btn.setEnabled(True)
         self._export_value_btn.setEnabled(True)
 
@@ -665,14 +745,20 @@ class MainWindow(_FramelessBase):
         )
         if not path:
             return
-        color_for_export = (
-            self._colorizer.complementary_layer(self._color_layer)
-            if self._chk_comp.isChecked()
-            else self._color_layer
-        )
+        cartoon_on = self._chk_cartoon_layer.isChecked()
+        if cartoon_on:
+            color_for_export = self._analyzer.cartoon_composite(
+                self._image_rgb, self._edge_slider.value()
+            )
+        elif self._chk_comp.isChecked():
+            color_for_export = self._colorizer.complementary_layer(self._color_layer)
+        else:
+            color_for_export = self._color_layer
         composite = self._exporter.composite(
             color_for_export, self._tonal_layer, self._edge_layer,
-            self._chk_color.isChecked(), self._chk_tonal.isChecked(), self._chk_edges.isChecked(),
+            show_color=self._chk_color.isChecked() or cartoon_on,
+            show_tonal=self._chk_tonal.isChecked(),
+            show_edges=self._chk_edges.isChecked() and not cartoon_on,
         )
         if self._chk_temp.isChecked() and self._masks:
             temp_layer = self._analyzer.temperature_map(self._image_rgb, self._masks)

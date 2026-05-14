@@ -23,12 +23,12 @@ QMenu {
 }
 QMenu::item:selected { background: #242220; color: #e8e6e3; }
 
-/* ── Header strip ─────────────────────────────────────────────────────── */
-QFrame#header {
+/* ── Title bar ────────────────────────────────────────────────────────── */
+QFrame#appTitleBar {
     background-color: #0d0c0b;
     border-bottom: 1px solid #242220;
-    min-height: 44px;
-    max-height: 44px;
+    min-height: 38px;
+    max-height: 38px;
 }
 QLabel#appTitle {
     color: #f0eeec;
@@ -40,6 +40,40 @@ QLabel#appSubtitle {
     color: #3a3836;
     font-size: 9px;
     letter-spacing: 2px;
+}
+
+/* Window control buttons (min / max / close) */
+QPushButton#winMin, QPushButton#winMax, QPushButton#winClose {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: #6a6865;
+    font-size: 15px;
+    padding: 0;
+}
+QPushButton#winMin:hover, QPushButton#winMax:hover {
+    background: #242220;
+    color: #f0eeec;
+}
+QPushButton#winClose:hover {
+    background: #c42b1c;
+    color: #ffffff;
+}
+QPushButton#winMin:pressed, QPushButton#winMax:pressed {
+    background: #2e2c29;
+    color: #f0eeec;
+}
+QPushButton#winClose:pressed {
+    background: #a32215;
+    color: #ffffff;
+}
+
+/* Legacy header strip (non-frameless fallback) */
+QFrame#header {
+    background-color: #0d0c0b;
+    border-bottom: 1px solid #242220;
+    min-height: 44px;
+    max-height: 44px;
 }
 
 /* ── Sidebar ──────────────────────────────────────────────────────────── */

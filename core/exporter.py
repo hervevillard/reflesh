@@ -35,47 +35,46 @@ class Exporter:
 
     def save_palette_png(self, palette: np.ndarray, path: str) -> None:
         from PIL import ImageDraw, ImageFont
-        import math
 
-        SIZE = 500
+        SWATCH_W = 72
+        SWATCH_H = 56
+        LABEL_H = 20
+        PAD = 4
         BG = (28, 25, 23)
-        LABEL_H = 22
-        PAD = 6
 
         # Sort darkest → lightest by perceptual luminance
-        lum = 0.2126 * palette[:, 0] + 0.7152 * palette[:, 1] + 0.0722 * palette[:, 2]
+        lum = (
+            0.2126 * palette[:, 0].astype(float)
+            + 0.7152 * palette[:, 1].astype(float)
+            + 0.0722 * palette[:, 2].astype(float)
+        )
         palette = palette[np.argsort(lum)]
 
         n = len(palette)
-        cols = math.ceil(math.sqrt(n))
-        rows = math.ceil(n / cols)
+        total_w = n * SWATCH_W
+        total_h = SWATCH_H + LABEL_H + PAD * 2
 
-        cell_w = SIZE // cols
-        cell_h = SIZE // rows
-
-        img = Image.new("RGB", (SIZE, SIZE), BG)
+        img = Image.new("RGB", (total_w, total_h), BG)
         draw = ImageDraw.Draw(img)
 
         try:
-            font = ImageFont.load_default(size=13)
+            font = ImageFont.load_default(size=11)
         except TypeError:
             font = ImageFont.load_default()
 
         for i, (r, g, b) in enumerate(palette.astype(int)):
-            col = i % cols
-            row = i // cols
-            x0 = col * cell_w + PAD
-            y0 = row * cell_h + PAD
-            x1 = x0 + cell_w - PAD * 2
-            y1 = y0 + cell_h - PAD * 2
+            x0 = i * SWATCH_W + PAD
+            x1 = (i + 1) * SWATCH_W - PAD
+            y0 = PAD
+            y1 = PAD + SWATCH_H
 
-            draw.rectangle([x0, y0, x1, y1 - LABEL_H], fill=(r, g, b))
+            draw.rectangle([x0, y0, x1, y1], fill=(r, g, b))
 
             hex_str = f"#{r:02x}{g:02x}{b:02x}"
             bb = draw.textbbox((0, 0), hex_str, font=font)
-            tx = x0 + (cell_w - PAD * 2 - (bb[2] - bb[0])) // 2
-            ty = y1 - LABEL_H + (LABEL_H - (bb[3] - bb[1])) // 2
-            draw.text((tx, ty), hex_str, fill=(250, 250, 249), font=font)
+            tx = i * SWATCH_W + (SWATCH_W - (bb[2] - bb[0])) // 2
+            ty = y1 + (LABEL_H - (bb[3] - bb[1])) // 2
+            draw.text((tx, ty), hex_str, fill=(180, 178, 175), font=font)
 
         img.save(path)
 
